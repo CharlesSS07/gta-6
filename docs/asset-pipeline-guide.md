@@ -192,20 +192,64 @@ A tile is 64m × 64m at LOD0. The sum of all geometry in a tile must not exceed 
 
 ---
 
+## Streaming Worker: Decompression Architecture
+
+**Critical constraint:** The streaming worker must decompress one tile at a time, in priority order (player movement vector first). Do not decompress multiple tiles concurrently.
+
+### WASM Module Initialization
+
+The streaming worker uses two WASM modules: Draco (~180KB) and Basis/KTX2 (~500KB). Both **must be initialized when the worker spawns, not on-demand.**
+
+**Why?** On-demand initialization of either module means the first tile to decompress pays a 200–500ms startup penalty (WASM compilation + linking). This blocks the main thread indirectly and creates a visible frame spike. Initialize both at worker startup; this is complete before `worldReady` resolves.
+
+### Single-Threaded Decompression
+
+Decompress tiles sequentially:
+1. Fetch tile from CDN
+2. Decompress Draco geometry
+3. Decode KTX2 textures (using the format string passed from main thread at init)
+4. Allocate GPU-ready buffers
+5. Transfer buffers to main thread via Transferable objects (zero-copy)
+6. Release worker's reference to transferred buffers
+7. Start next tile in priority queue
+
+Holding multiple decompressed buffers simultaneously creates memory spikes. The priority queue ensures correct load order; sequential decompression manages VRAM.
+
+---
+
 ## Texture Requirements: KTX2 / Basis Universal
 
 **All textures must be KTX2/Basis Universal. No exceptions.**
 
 One uncompressed 4K albedo atlas exceeds the per-tile texture budget. Compressed textures are mandatory for the performance target.
 
+### Format Detection & Initialization (Critical Ordering)
+
+**Format capability must be detected on the main thread at startup, not in the worker.** This is a load-bearing constraint:
+
+1. Main thread queries WebGL extensions on initialization: `EXT_texture_compression_bptc`, `EXT_texture_compression_s3tc`, `WEBGL_compressed_texture_astc`
+2. Determines the target format string (e.g., `"BC7"`, `"BC1"`, `"ASTC"`, or `"RGBA8"` for uncompressed fallback)
+3. Passes the format string to the streaming worker **before any tile requests begin**
+4. Worker uses this format for all Basis Universal transcoding
+
+**Why?** WebGL context doesn't exist in Web Workers. If the worker tries to query formats, it will fail silently. The worker can only transcode Basis Universal to a pre-specified format based on main thread initialization.
+
 ### Supported Compression Paths
 
-| Platform | Format | Notes |
-|---|---|---|
-| **Desktop Chrome/Firefox** | `EXT_texture_compression_bptc` or `EXT_texture_compression_s3tc` | Typical path; widely supported |
-| **Apple Silicon (Safari)** | `ASTC` | Fallback path; required for iPad/Mac deployment |
+| Platform | GL Extension | Format String | Notes |
+|---|---|---|---|
+| **Chrome/Firefox (recent GPU)** | `EXT_texture_compression_bptc` | `"BC7"` | Highest quality, desktop-only |
+| **Chrome/Firefox (older GPU)** | `WEBGL_compressed_texture_s3tc` | `"BC1"` or `"BC3"` | Fallback for pre-2015 GPUs |
+| **Safari (Apple Silicon)** | `WEBGL_compressed_texture_astc` | `"ASTC"` | iOS, iPadOS, macOS with Apple GPU |
+| **Unsupported hardware** | (none) | `"RGBA8"` | Uncompressed; flag as unsupported, warn user |
 
-**[PLACEHOLDER: Lux — confirm ASTC fallback validation is in place for QA. Any other platform-specific compression paths we need to handle?]**
+### KTX2 Encoding Requirement
+
+KTX2 files **must be encoded with Basis Universal** (either ETC1S or UASTC mode):
+- **UASTC:** Higher quality, larger file size. Recommended for albedo and normal maps.
+- **ETC1S:** Smaller file size, lower quality. Acceptable for roughness/metallic/AO maps.
+
+One KTX2 source file can be transcoded to any of the formats above by the Basis Universal WASM decoder. The pipeline only produces one KTX2 per texture; the worker handles multi-format decoding on client side.
 
 ### Resolution Limits by Tier
 
@@ -229,31 +273,46 @@ Props (Class 4) must be GPU-instanced by type per tile. This reduces draw calls 
 
 ### What is instanceTypeId?
 
-An `instanceTypeId` is a numeric identifier assigned to every prop asset at authoring time. It groups identical or visually similar props for GPU instancing.
+An `instanceTypeId` is a stable, semantic string identifier assigned to every prop asset at authoring time. It groups identical or visually similar props for GPU instancing.
 
 **Example:**
-- All fire hydrants (red, standard city hydrant) → `instanceTypeId: 1001`
-- All wooden benches (park bench) → `instanceTypeId: 2001`
-- All bollards (concrete, standard) → `instanceTypeId: 3001`
-- All street signs (all variants) → `instanceTypeId: 4001`
+- All fire hydrants (red, standard city hydrant) → `instanceTypeId: "prop.fire_hydrant.standard"`
+- All wooden benches (park bench) → `instanceTypeId: "prop.bench.park"`
+- All bollards (concrete, standard) → `instanceTypeId: "prop.bollard.concrete.standard"`
+- All street signs (all variants) → `instanceTypeId: "prop.street_sign.generic"`
 
 ### Why Separate by Type?
 
 Babylon.js `InstancedMesh` groups geometry by material and mesh. One draw call per type per tile, not per instance.
 
 **Without tagging:** 60 fire hydrants scattered across a tile = 60 draw calls
-**With tagging:** 60 fire hydrants, all `instanceTypeId: 1001` = 1 draw call
+**With tagging:** 60 fire hydrants, all `instanceTypeId: "prop.fire_hydrant.standard"` = 1 draw call
 
 Per-tile draw call budget is ≤40. Instancing is required to stay under this limit.
 
 ### Tagging Requirements
 
-1. **Assign instanceTypeId at asset authoring time** — include in the asset metadata (JSON sidecar or embedded in the GLB file)
-2. **Document the mapping** — maintain a props registry: `instanceTypeId → asset name → visual description`
-3. **Validate at import** — asset validator checks that all props have an instanceTypeId; rejects those without
-4. **Per-tile deduplication** — the streaming worker reads instanceTypeId and groups by type on load
+1. **Semantic, stable IDs** — Use human-readable strings like `"prop.fire_hydrant.standard"` or `"prop.bench.park"`. IDs must be stable across pipeline rebuilds. Do not use auto-generated or hash-based IDs; auto-generated IDs break on rebuild. Maintain a central props registry mapping IDs to asset names.
+2. **Assign at asset authoring time** — Include in the asset metadata (JSON sidecar or embedded in GLB metadata)
+3. **Document the mapping** — Central registry: `instanceTypeId → asset name → visual description`
+4. **Validate at import** — Asset validator checks that all props have an instanceTypeId; rejects those without
+5. **Per-tile deduplication** — The streaming worker reads instanceTypeId and groups by type on load
 
-**[PLACEHOLDER: Lux or Phoenix — what is the canonical tool/workflow for authoring instanceTypeId? Are props authored in Blender with metadata, or is there a pipeline step that auto-assigns based on asset name/folder?]**
+### Edge Cases: Shared Physics, Different Render
+
+**Constraint:** `instanceTypeId` drives render batch grouping (GPU instancing). Collision geometry is a separate field and can be shared across render IDs.
+
+**Example:** Two fire hydrant models (slightly different paint, damage states) with identical collision shape:
+- Prop A: `instanceTypeId: "prop.fire_hydrant.standard"`, physics hull: `fire_hydrant_base`
+- Prop B: `instanceTypeId: "prop.fire_hydrant.damaged"`, physics hull: `fire_hydrant_base` (same)
+
+Render instances are separate (different models); collision is shared (same hull). Both reuse the same collision shape in Havok, reducing collision memory.
+
+### Props Spanning Tile Boundaries
+
+**Rule:** A prop's origin point must lie within the tile that owns it. Do not split props across tiles.
+
+**Example:** A large dumpster positioned near a tile edge. The dumpster's local origin (0,0,0 in model space, placed in world space) must be in the tile that contains it. The dumpster's visual and collision bounds may extend into adjacent tiles — the render/physics systems handle this via frustum culling and BVH spatial partitioning.
 
 ---
 
@@ -275,14 +334,31 @@ Collision meshes are distinct from render geometry. A building may have detailed
 
 The physics engine (Havok) needs clean geometry without visual detail artifacts.
 
+### Tools & Workflow
+
+**Building Colliders:**
+- **Rectangular buildings (most of downtown LA):** Manually author a simple box convex hull. This is faster and cleaner than automated decomposition.
+- **Irregular buildings (complex floor plates):** Use V-HACD for convex hull decomposition. Generate the convex hulls in Blender or Maya, validate manually.
+
+**Havok Convex Hull Limit:** Havok supports max **32 vertices per convex hull body.** V-HACD output must be validated against this limit. If V-HACD produces hulls with >32 vertices, reject the asset at import validation. Simplify by hand if necessary.
+
+**Collision Accuracy:** The convex hull must not exceed the visual mesh AABB (axis-aligned bounding box) by more than **5% in any dimension.** Larger deviation causes vehicles to collide with invisible geometry, breaking driving feel.
+
+**Road Mesh Intersections:** T-junctions and four-way intersections where road strips overlap can produce Z-fighting in the physics broadphase. Treat each intersection as a separate flat mesh that covers the junction area, not an overlap of two road strips.
+
+**Props:** Use only box or capsule approximations. **No mesh colliders on props, no exceptions.** A mesh collider on a prop will be rejected at import validation.
+
 ### Workflow
 
-1. Author collision mesh separately from render mesh (typically in Blender)
-2. Bake collision mesh at the specified tolerance
-3. Validate collision normals (no flipped faces, no non-manifold geometry)
-4. Assets export as two separate meshes: `asset_LOD0.glb` (render) + `asset_collision.glb` (physics)
-
-**[PLACEHOLDER: Lux or Phoenix — what tool/script validates collision mesh quality at import time? Do we auto-generate collision from render mesh simplification, or is it always hand-authored?]**
+1. Author collision mesh separately from render mesh (in Blender/Maya)
+2. For buildings: manually author box hulls or run V-HACD decomposition
+3. For props: author box or capsule approximations
+4. Validate:
+   - Normals are consistent (no flipped faces)
+   - Geometry is manifold (no non-manifold edges)
+   - Convex hulls have ≤32 vertices (Havok limit)
+   - Hull AABB doesn't exceed visual mesh AABB by >5%
+5. Export as two separate assets: `asset_LOD0.glb` (render) + `asset_collision.glb` (physics)
 
 ---
 
@@ -297,11 +373,17 @@ The asset import validator is the final gate before assets enter the world. It e
 - [ ] Asset belongs to exactly one LOD class (1–7)
 - [ ] Vertex count ≤ tier budget for each LOD level
 - [ ] Texture resolution ≤ tier maximum (see [Texture Requirements](#texture-requirements-ktx2--basis-universal))
-- [ ] Textures are KTX2-encoded (not PNG, JPEG, or uncompressed)
+- [ ] Textures are power-of-2 dimensions (256, 512, 1024; not 480×320)
+- [ ] Textures are KTX2-encoded with Basis Universal (not PNG, JPEG, or raw KTX2)
 - [ ] All geometry is Draco-compressed
+- [ ] Draco attribute IDs are canonical: position=0, normal=1, texcoord=2
+- [ ] GLB includes baked vertex normals (do not rely on runtime normal generation)
 - [ ] Collision mesh present and separate from render mesh
-- [ ] Collision mesh normals validated (no flipped faces)
-- [ ] If asset is Class 4 (props): instanceTypeId is present and non-zero
+- [ ] Collision mesh normals validated (no flipped faces, manifold geometry)
+- [ ] Collision convex hulls ≤ 32 vertices (Havok limit)
+- [ ] Collision hull AABB doesn't exceed visual mesh AABB by >5% in any dimension
+- [ ] If asset is Class 4 (props): instanceTypeId is present, semantic, and stable
+- [ ] If asset is Class 4 (props): uses box or capsule collision only (no mesh colliders)
 - [ ] Impostor textures (Class 1): pre-baked from LOD0, 4K resolution, billboard geometry
 
 #### Per-Tile Validation
@@ -312,17 +394,39 @@ The asset import validator is the final gate before assets enter the world. It e
 
 ### Rejection Criteria
 
-The validator **rejects** assets with any of the following:
+The validator **rejects** assets with any of the following (hard gates, not warnings):
 
 - **Vertex budget exceeded:** Asset LOD tier exceeds vertex budget
-- **Texture not KTX2:** Texture is PNG, JPEG, or uncompressed format
-- **No compression:** Geometry is not Draco-compressed
+- **Texture not KTX2 with Basis:** Texture is PNG, JPEG, uncompressed, or raw KTX2 without Basis Universal encoding
+- **Non-POT texture dimensions:** Texture is not a power of 2 (256, 512, 1024, etc.)
+- **No Draco compression:** Geometry is not Draco-compressed
+- **Invalid Draco attributes:** Attribute IDs are not canonical (position=0, normal=1, texcoord=2)
+- **Missing vertex normals:** GLB geometry lacks baked normals (will render black in PBR shader)
 - **Missing collision mesh:** Collidable asset (building, vehicle, prop) has no collision geometry
-- **No instanceTypeId:** Class 4 (props) asset missing instanceTypeId
-- **Tile budget exceeded:** Total vertex count or draw calls in tile exceed limits
-- **Corrupted impostor:** Class 1 impostor billboard missing or malformed
+- **Invalid collision shape:** Convex hulls exceed 32 vertices, or prop has mesh collider instead of box/capsule
+- **Collision AABB mismatch:** Collision hull exceeds visual mesh AABB by >5%
+- **No instanceTypeId:** Class 4 (props) asset missing instanceTypeId, or ID is auto-generated (not stable/semantic)
+- **Mesh collider on props:** Class 4 (props) uses mesh collider; only box/capsule allowed
+- **Tile budget exceeded:** Total vertex count (>31,500) or draw calls (>40) in tile exceed limits
+- **Corrupted impostor:** Class 1 impostor billboard missing, malformed, or wrong resolution
 
-**[PLACEHOLDER: Lux — are there any other rejection criteria I should add? Any edge cases we've found during pipeline development?]**
+### Texture Atlasing (Per-Tile Performance)
+
+To stay within the 40 draw calls/tile budget and manage texture memory, texture atlasing is required.
+
+**Per-tile atlas target:**
+- 1 albedo/diffuse atlas (combines all building/prop color textures for the tile)
+- 1 normal map atlas
+- 1 ORM atlas (occlusion/roughness/metallic combined)
+
+Separate textures per prop = one draw call per texture = draw call explosion. Atlasing reduces dozens of textures to 3 atlases.
+
+**Workflow:**
+1. Author assets with separate textures (standard for 3D work)
+2. At tile bake time, pack all textures for the tile into atlases
+3. Update UV coordinates in the mesh to match the atlas layout
+4. Encode atlases as KTX2, compress geometry as Draco
+5. Validate tile-level draw call budget
 
 ### Validation Output
 
@@ -349,14 +453,19 @@ Status: ✓ PASS
 These are non-negotiable. Violation of any of these requirements blocks asset import.
 
 1. **Every building gets exactly the LOD count for its asset class.** No "we'll add LODs later."
-2. **All prop meshes tagged with `instanceTypeId`** for GPU instancing.
-3. **All textures KTX2/Basis Universal.** No PNG, JPEG, or uncompressed.
+2. **All prop meshes tagged with `instanceTypeId`** (semantic, stable IDs) for GPU instancing.
+3. **All textures KTX2/Basis Universal** with power-of-2 dimensions. No PNG, JPEG, or raw KTX2.
 4. **Max 1024×1024 for LOD0 buildings.** Max 512×512 for LOD1+.
 5. **Impostors pre-generated at build pipeline time** for all Class 1 (Large Building) assets.
 6. **Vertex counts validated at asset import.** Assets exceeding tier budget are rejected.
-7. **Collision meshes baked separately** from render meshes, to specified tolerances.
-8. **All geometry Draco-compressed.** Decompression happens in streaming worker only.
-9. **Per-tile vertex budget ≤ 31,500** and **draw call budget ≤ 40**.
+7. **Collision meshes baked separately** from render meshes, convex hulls ≤32 vertices, hull AABB ≤5% deviation.
+8. **All geometry Draco-compressed** with canonical attribute IDs (position=0, normal=1, texcoord=2).
+9. **Baked vertex normals required** in all GLB meshes (no runtime normal generation).
+10. **Props use only box/capsule collision** (no mesh colliders).
+11. **Texture atlasing per tile** (1 albedo, 1 normal, 1 ORM atlas) to stay within draw call budget.
+12. **Streaming worker initialization complete** (Draco + Basis WASM loaded and compiled) before world is playable.
+13. **Per-tile vertex budget ≤ 31,500** and **draw call budget ≤ 40**.
+14. **Props anchored to tile origin** (large props may extend into adjacent tiles, but origin must be in owning tile).
 
 ---
 
@@ -385,6 +494,25 @@ Game client → Streaming worker fetches from CDN
   ↓
 Main thread GPU upload → Scene rendered
 ```
+
+---
+
+## Far-LOD Tile Manifests
+
+Far-LOD tiles (beyond 500m from player, 600m–1km visibility) contain only LOD2/impostor geometry and do not require collision meshes.
+
+**Manifest specification:** When a far-LOD tile has no collision data, the tile manifest must explicitly set collision to `null`, not omit it.
+
+```json
+{
+  "tileId": "tile_x_y",
+  "geometryUrl": "geometry_tile_x_y.glb",
+  "collision": null,
+  "distance": "far_lod"
+}
+```
+
+**Why explicit null?** Omission creates ambiguity — the client can't distinguish between "no collision data (far LOD)" and "collision data not yet streamed (near LOD)." Explicit null is a clear signal that collision is intentionally absent.
 
 ---
 
@@ -425,4 +553,4 @@ Class 1 assets require pre-baked impostor billboards. Generate 8-angle impostor 
 - `/docs/architecture-guide.md` — Rationale for design decisions
 
 **Last updated:** 2026-03-20
-**Next review:** After Lux constraint input and before pipeline tooling is finalized
+**Next review:** When pipeline tooling build begins
