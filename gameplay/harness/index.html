@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Streets of Angels — Vehicle Test Harness v0.1</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; overflow: hidden; font-family: 'Courier New', monospace; }
+    #renderCanvas { width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+    #hud {
+      position: fixed; top: 20px; left: 20px;
+      color: #00ff88; font-size: 14px; pointer-events: none;
+      text-shadow: 0 0 8px #00ff8866;
+    }
+    #hud .label { color: #667; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+    #speed-val { font-size: 32px; font-weight: bold; line-height: 1; }
+    #hud .unit { font-size: 12px; color: #555; }
+    #state-val { margin-top: 8px; font-size: 13px; color: #ff9900; }
+
+    #tuning {
+      position: fixed; top: 0; right: 0; bottom: 0;
+      width: 280px;
+      background: rgba(8, 8, 8, 0.92);
+      color: #ccc;
+      padding: 20px 16px;
+      font-size: 12px;
+      border-left: 1px solid #1a1a1a;
+      overflow-y: auto;
+    }
+    #tuning h3 {
+      color: #00ff88; margin-bottom: 4px; font-size: 13px;
+      letter-spacing: 2px; text-transform: uppercase;
+    }
+    #tuning .subtitle {
+      color: #444; font-size: 10px; margin-bottom: 16px;
+      border-bottom: 1px solid #1a1a1a; padding-bottom: 12px;
+    }
+    .section-title {
+      color: #666; font-size: 10px; letter-spacing: 2px;
+      text-transform: uppercase; margin: 14px 0 8px;
+      border-top: 1px solid #1a1a1a; padding-top: 10px;
+    }
+    .param { margin-bottom: 10px; }
+    .param .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+    .param .name { color: #aaa; }
+    .param .value { color: #00ff88; font-weight: bold; min-width: 40px; text-align: right; }
+    .param input[type=range] {
+      width: 100%; height: 4px; -webkit-appearance: none;
+      background: #222; border-radius: 2px; outline: none; cursor: pointer;
+    }
+    .param input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 12px; height: 12px;
+      background: #00ff88; border-radius: 50%; cursor: pointer;
+    }
+
+    #controls {
+      position: fixed; bottom: 20px; left: 20px;
+      color: #444; font-size: 11px; pointer-events: none;
+      line-height: 1.8;
+    }
+    .key {
+      display: inline-block; background: #1a1a1a; border: 1px solid #333;
+      padding: 1px 5px; border-radius: 3px; color: #888; font-size: 10px;
+    }
+
+    #loading {
+      position: fixed; inset: 0; background: #0a0a0a;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #00ff88; font-size: 14px; letter-spacing: 2px;
+      z-index: 100;
+    }
+    #loading .bar-wrap {
+      width: 200px; height: 2px; background: #1a1a1a; margin-top: 20px; border-radius: 1px;
+    }
+    #loading .bar { height: 100%; background: #00ff88; border-radius: 1px; transition: width 0.3s; }
+    #loading .sub { color: #444; font-size: 10px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<canvas id="renderCanvas"></canvas>
+
+<div id="loading">
+  <div>STREETS OF ANGELS</div>
+  <div style="color:#444;font-size:11px;margin-top:6px;letter-spacing:3px">VEHICLE TEST HARNESS v0.1</div>
+  <div class="bar-wrap"><div class="bar" id="loadBar" style="width:0%"></div></div>
+  <div class="sub" id="loadStatus">Initialising Havok physics...</div>
+</div>
+
+<div id="hud" style="display:none">
+  <div class="label">speed</div>
+  <div><span id="speed-val">0</span><span class="unit"> km/h</span></div>
+  <div id="state-val">IDLE</div>
+</div>
+
+<div id="tuning" style="display:none">
+  <h3>Live Tuning</h3>
+  <div class="subtitle">Changes apply instantly - no restart needed</div>
+
+  <div class="section-title">Suspension</div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Stiffness</span>
+      <span class="value" id="v-suspStiff">40</span>
+    </div>
+    <input type="range" id="s-suspStiff" min="5" max="80" step="1" value="40">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Damping (relax)</span>
+      <span class="value" id="v-suspDamp">2.3</span>
+    </div>
+    <input type="range" id="s-suspDamp" min="0.5" max="8" step="0.1" value="2.3">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Compression</span>
+      <span class="value" id="v-suspComp">4.4</span>
+    </div>
+    <input type="range" id="s-suspComp" min="0.5" max="12" step="0.1" value="4.4">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Rest Length (m)</span>
+      <span class="value" id="v-restLen">0.55</span>
+    </div>
+    <input type="range" id="s-restLen" min="0.2" max="1.2" step="0.05" value="0.55">
+  </div>
+
+  <div class="section-title">Handling</div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Wheel Friction</span>
+      <span class="value" id="v-friction">1.8</span>
+    </div>
+    <input type="range" id="s-friction" min="0.3" max="4.0" step="0.1" value="1.8">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Roll Influence</span>
+      <span class="value" id="v-rollInf">0.05</span>
+    </div>
+    <input type="range" id="s-rollInf" min="0.0" max="0.5" step="0.01" value="0.05">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Max Steer (deg)</span>
+      <span class="value" id="v-steerMax">30</span>
+    </div>
+    <input type="range" id="s-steerMax" min="10" max="50" step="1" value="30">
+  </div>
+
+  <div class="section-title">Drivetrain</div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Engine Force</span>
+      <span class="value" id="v-engForce">2100</span>
+    </div>
+    <input type="range" id="s-engForce" min="500" max="8000" step="100" value="2100">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Brake Force</span>
+      <span class="value" id="v-brakeForce">60</span>
+    </div>
+    <input type="range" id="s-brakeForce" min="10" max="200" step="5" value="60">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Handbrake Force</span>
+      <span class="value" id="v-hbForce">140</span>
+    </div>
+    <input type="range" id="s-hbForce" min="50" max="500" step="10" value="140">
+  </div>
+
+  <div class="section-title">Mass &amp; CoM</div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">Mass (kg)</span>
+      <span class="value" id="v-mass">1400</span>
+    </div>
+    <input type="range" id="s-mass" min="600" max="3000" step="50" value="1400">
+  </div>
+
+  <div class="param">
+    <div class="row">
+      <span class="name">CoM Height</span>
+      <span class="value" id="v-comHeight">-0.2</span>
+    </div>
+    <input type="range" id="s-comHeight" min="-0.8" max="0.6" step="0.05" value="-0.2">
+  </div>
+
+  <div style="margin-top:20px; padding-top:12px; border-top:1px solid #1a1a1a;">
+    <button id="btn-reset" style="
+      width:100%; padding:8px; background:#1a1a1a; color:#ff4444;
+      border:1px solid #333; border-radius:4px; cursor:pointer; font-family:inherit;
+      letter-spacing:1px; text-transform:uppercase; font-size:11px;
+    ">Reset Vehicle</button>
+  </div>
+</div>
+
+<div id="controls" style="display:none">
+  <span class="key">W</span>/<span class="key">S</span> Throttle/Brake &nbsp;
+  <span class="key">A</span>/<span class="key">D</span> Steer &nbsp;
+  <span class="key">SPACE</span> Handbrake &nbsp;
+  <span class="key">R</span> Reset &nbsp;
+  <span class="key">C</span> Cam
+</div>
+
+<!-- Babylon.js + Havok from CDN -->
+<script src="https://cdn.babylonjs.com/havok/HavokPhysics.js"></script>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+<script>
+(async () => {
+  // Loading UI helpers
+  const loadBar    = document.getElementById('loadBar');
+  const loadStatus = document.getElementById('loadStatus');
+  function setLoad(pct, msg) {
+    loadBar.style.width = pct + '%';
+    loadStatus.textContent = msg;
+  }
+
+  // Babylon Engine
+  const canvas = document.getElementById('renderCanvas');
+  const engine = new BABYLON.Engine(canvas, true, {
+    preserveDrawingBuffer: true,
+    stencil: true,
+    antialias: true,
+  });
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.08, 0.08, 0.09, 1);
+
+  // Havok
+  setLoad(20, 'Loading Havok WASM...');
+  const havokInstance = await HavokPhysics();
+  setLoad(50, 'Initialising physics plugin...');
+  const havokPlugin = new BABYLON.HavokPlugin(true, havokInstance);
+  scene.enablePhysics(new BABYLON.Vector3(0, -9.81, 0), havokPlugin);
+  setLoad(70, 'Building scene...');
+
+  // Lighting
+  const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
+  hemi.intensity = 0.6;
+  hemi.groundColor = new BABYLON.Color3(0.1, 0.1, 0.12);
+
+  const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-1, -2.5, -1).normalize(), scene);
+  sun.intensity = 1.2;
+  sun.position = new BABYLON.Vector3(50, 100, 50);
+
+  const shadowGen = new BABYLON.ShadowGenerator(1024, sun);
+  shadowGen.useBlurExponentialShadowMap = true;
+
+  // Ground
+  const ground = BABYLON.MeshBuilder.CreateGround('ground', { width: 600, height: 600, subdivisions: 1 }, scene);
+  const groundMat = new BABYLON.StandardMaterial('groundMat', scene);
+  groundMat.diffuseColor  = new BABYLON.Color3(0.22, 0.22, 0.24);
+  groundMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  ground.material = groundMat;
+  ground.receiveShadows = true;
+
+  const gridMat = new BABYLON.GridMaterial ? new BABYLON.GridMaterial('grid', scene) : null;
+  if (gridMat) {
+    gridMat.majorUnitFrequency = 10;
+    gridMat.minorUnitVisibility = 0.2;
+    gridMat.gridRatio = 1;
+    gridMat.mainColor  = new BABYLON.Color3(0.3, 0.3, 0.33);
+    gridMat.lineColor  = new BABYLON.Color3(0.15, 0.15, 0.17);
+    gridMat.opacity    = 0.8;
+    ground.material    = gridMat;
+  }
+
+  new BABYLON.PhysicsAggregate(ground, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.9, restitution: 0.1 }, scene);
+
+  // Boundary walls (invisible)
+  const wallH = 6, wallL = 600;
+  [
+    { pos: new BABYLON.Vector3(0, wallH/2, 300),  rot: BABYLON.Vector3.Zero() },
+    { pos: new BABYLON.Vector3(0, wallH/2, -300), rot: BABYLON.Vector3.Zero() },
+    { pos: new BABYLON.Vector3(300, wallH/2, 0),  rot: new BABYLON.Vector3(0, Math.PI/2, 0) },
+    { pos: new BABYLON.Vector3(-300, wallH/2, 0), rot: new BABYLON.Vector3(0, Math.PI/2, 0) },
+  ].forEach(({ pos, rot }) => {
+    const w = BABYLON.MeshBuilder.CreateBox('wall', { width: wallL, height: wallH, depth: 0.5 }, scene);
+    w.position.copyFrom(pos);
+    w.rotation.copyFrom(rot);
+    w.isVisible = false;
+    new BABYLON.PhysicsAggregate(w, BABYLON.PhysicsShapeType.BOX, { mass: 0 }, scene);
+  });
+
+  // Tuning parameters (live)
+  // engForce: per-wheel. 2x2100 = 4200N total -> ~3.0 m/s^2 -> economy sedan 0-60 in ~5.6s
+  // hbForce:  per-wheel. 2x140 = 280N total braking -> economy sedan drift threshold
+  const T = {
+    suspStiff:  40,
+    suspDamp:   2.3,
+    suspComp:   4.4,
+    restLen:    0.55,
+    friction:   1.8,
+    rollInf:    0.05,
+    steerMax:   30,
+    engForce:   2100,
+    brakeForce: 60,
+    hbForce:    140,
+    mass:       1400,
+    comHeight:  -0.2,
+  };
+
+  // Vehicle dimensions
+  const CHASSIS_W = 1.9, CHASSIS_H = 0.65, CHASSIS_L = 4.2;
+  const WHEEL_R   = 0.35;
+  const SPAWN_Y   = 2.0;
+
+  // Chassis mesh
+  const chassisMesh = BABYLON.MeshBuilder.CreateBox('chassis', {
+    width: CHASSIS_W, height: CHASSIS_H, depth: CHASSIS_L,
+  }, scene);
+  const chassisMat = new BABYLON.StandardMaterial('chassisMat', scene);
+  chassisMat.diffuseColor = new BABYLON.Color3(0.18, 0.45, 0.80);
+  chassisMesh.material = chassisMat;
+  chassisMesh.position.y = SPAWN_Y;
+  shadowGen.addShadowCaster(chassisMesh);
+
+  const cabMesh = BABYLON.MeshBuilder.CreateBox('cab', { width: 1.6, height: 0.4, depth: 2.0 }, scene);
+  cabMesh.material = chassisMat;
+  cabMesh.parent = chassisMesh;
+  cabMesh.position.set(0, 0.52, 0.2);
+
+  // Physics aggregate
+  const chassisAggregate = new BABYLON.PhysicsAggregate(
+    chassisMesh,
+    BABYLON.PhysicsShapeType.BOX,
+    { mass: T.mass, friction: 0.5, restitution: 0.15 },
+    scene
+  );
+
+  chassisAggregate.body.setMassProperties({
+    mass: T.mass,
+    centerOfMass: new BABYLON.Vector3(0, T.comHeight, 0),
+    inertia: new BABYLON.Vector3(
+      (T.mass / 12) * (CHASSIS_H * CHASSIS_H + CHASSIS_L * CHASSIS_L),
+      (T.mass / 12) * (CHASSIS_W * CHASSIS_W + CHASSIS_L * CHASSIS_L),
+      (T.mass / 12) * (CHASSIS_W * CHASSIS_W + CHASSIS_H * CHASSIS_H)
+    ),
+    inertiaOrientation: BABYLON.Quaternion.Identity(),
+  });
+
+  // Wheel meshes
+  const WHEEL_OFFSETS = [
+    new BABYLON.Vector3(-CHASSIS_W * 0.52, -0.15,  CHASSIS_L * 0.38),  // FL
+    new BABYLON.Vector3( CHASSIS_W * 0.52, -0.15,  CHASSIS_L * 0.38),  // FR
+    new BABYLON.Vector3(-CHASSIS_W * 0.52, -0.15, -CHASSIS_L * 0.38),  // RL
+    new BABYLON.Vector3( CHASSIS_W * 0.52, -0.15, -CHASSIS_L * 0.38),  // RR
+  ];
+  const IS_FRONT = [true, true, false, false];
+
+  const wheelMeshes = WHEEL_OFFSETS.map((offset, i) => {
+    const wm = BABYLON.MeshBuilder.CreateCylinder(`wheel${i}`, {
+      diameter: WHEEL_R * 2,
+      height: 0.28,
+      tessellation: 16,
+    }, scene);
+    const wMat = new BABYLON.StandardMaterial(`wMat${i}`, scene);
+    wMat.diffuseColor = new BABYLON.Color3(0.08, 0.08, 0.10);
+    wm.material = wMat;
+    wm.rotation.z = Math.PI / 2;
+    shadowGen.addShadowCaster(wm);
+
+    const hub = BABYLON.MeshBuilder.CreateDisc(`hub${i}`, { radius: WHEEL_R * 0.6, tessellation: 12 }, scene);
+    const hubMat = new BABYLON.StandardMaterial(`hubMat${i}`, scene);
+    hubMat.diffuseColor = new BABYLON.Color3(0.55, 0.55, 0.60);
+    hub.material = hubMat;
+    hub.parent = wm;
+    hub.position.x = i % 2 === 0 ? -0.15 : 0.15;
+    hub.rotation.y = Math.PI / 2;
+
+    return wm;
+  });
+
+  // PhysicsVehicle
+  let vehicle = null;
+  try {
+    vehicle = new BABYLON.PhysicsVehicle(chassisAggregate.body, havokPlugin);
+
+    WHEEL_OFFSETS.forEach((offset, i) => {
+      vehicle.addWheel({
+        connectionPointLocal: offset,
+        directionLocal:       new BABYLON.Vector3(0, -1, 0),
+        axleLocal:            new BABYLON.Vector3(-1, 0, 0),
+        suspensionRestLength: T.restLen,
+        radius:               WHEEL_R,
+        isFrontWheel:         IS_FRONT[i],
+        frictionSlip:         T.friction,
+        suspensionStiffness:  T.suspStiff,
+        dampingRelaxation:    T.suspDamp,
+        dampingCompression:   T.suspComp,
+        maxSuspensionForce:   80000,
+        maxSuspensionTravel:  0.4,
+        rollInfluence:        T.rollInf,
+      });
+    });
+    console.log('[Harness] PhysicsVehicle initialised - 4 wheels added');
+  } catch (err) {
+    console.warn('[Harness] PhysicsVehicle unavailable, falling back to force model:', err.message);
+    vehicle = null;
+  }
+
+  // Rebuild vehicle (re-applies all wheel physics params for live tuning sliders)
+  // addWheel() sets suspension/friction/damping once at init; there are no per-parameter setters
+  // in the Babylon.js PhysicsVehicle API. The correct way to update these live is to dispose and
+  // recreate the vehicle, which re-reads all current T[] values. The chassis body is unaffected.
+  function rebuildVehicle() {
+    if (!vehicle) return;
+    try { vehicle.dispose(); } catch {}
+    try {
+      vehicle = new BABYLON.PhysicsVehicle(chassisAggregate.body, havokPlugin);
+      WHEEL_OFFSETS.forEach((offset, i) => {
+        vehicle.addWheel({
+          connectionPointLocal: offset,
+          directionLocal:       new BABYLON.Vector3(0, -1, 0),
+          axleLocal:            new BABYLON.Vector3(-1, 0, 0),
+          suspensionRestLength: T.restLen,
+          radius:               WHEEL_R,
+          isFrontWheel:         IS_FRONT[i],
+          frictionSlip:         T.friction,
+          suspensionStiffness:  T.suspStiff,
+          dampingRelaxation:    T.suspDamp,
+          dampingCompression:   T.suspComp,
+          maxSuspensionForce:   80000,
+          maxSuspensionTravel:  0.4,
+          rollInfluence:        T.rollInf,
+        });
+      });
+    } catch (err) {
+      console.warn('[Harness] rebuildVehicle failed - wheel params may not have updated:', err.message);
+    }
+  }
+
+  // Input state
+  const keys = { w: false, s: false, a: false, d: false, space: false };
+  window.addEventListener('keydown', e => {
+    const k = e.code;
+    if (k === 'KeyW' || k === 'ArrowUp')    { keys.w = true;     e.preventDefault(); }
+    if (k === 'KeyS' || k === 'ArrowDown')  { keys.s = true;     e.preventDefault(); }
+    if (k === 'KeyA' || k === 'ArrowLeft')  { keys.a = true;     e.preventDefault(); }
+    if (k === 'KeyD' || k === 'ArrowRight') { keys.d = true;     e.preventDefault(); }
+    if (k === 'Space')                      { keys.space = true; e.preventDefault(); }
+    if (k === 'KeyR') resetVehicle();
+    if (k === 'KeyC') toggleCamera();
+  });
+  window.addEventListener('keyup', e => {
+    const k = e.code;
+    if (k === 'KeyW' || k === 'ArrowUp')    keys.w     = false;
+    if (k === 'KeyS' || k === 'ArrowDown')  keys.s     = false;
+    if (k === 'KeyA' || k === 'ArrowLeft')  keys.a     = false;
+    if (k === 'KeyD' || k === 'ArrowRight') keys.d     = false;
+    if (k === 'Space')                      keys.space = false;
+  });
+
+  // Camera
+  const followCam = new BABYLON.ArcRotateCamera('follow', -Math.PI / 2, Math.PI / 4, 18, BABYLON.Vector3.Zero(), scene);
+  followCam.lowerRadiusLimit = 5;
+  followCam.upperRadiusLimit = 40;
+  followCam.lowerBetaLimit   = 0.1;
+  followCam.upperBetaLimit   = Math.PI / 2.2;
+  followCam.attachControl(canvas, true);
+  scene.activeCamera = followCam;
+
+  let camMode = 0;
+  const chaseOffset = new BABYLON.Vector3(0, 4, -12);
+  function toggleCamera() { camMode = 1 - camMode; }
+
+  let camTarget = BABYLON.Vector3.Zero();
+
+  // Vehicle state
+  let steering    = 0;
+  let wheelSpin   = 0;
+  let driveState  = 'IDLE';
+
+  const tmpVec = new BABYLON.Vector3();
+  const tmpQuat = new BABYLON.Quaternion();
+
+  // Wheel position helpers
+  const wheelPos = new BABYLON.Vector3();
+  const wheelRot = new BABYLON.Quaternion();
+
+  function updateWheelMeshFromVehicle(i) {
+    try {
+      vehicle.getWheelPositionToRef(i, wheelPos);
+      vehicle.getWheelRotationToRef(i, wheelRot);
+      wheelMeshes[i].position.copyFrom(wheelPos);
+      if (!wheelMeshes[i].rotationQuaternion) {
+        wheelMeshes[i].rotationQuaternion = wheelRot.clone();
+      } else {
+        wheelMeshes[i].rotationQuaternion.copyFrom(wheelRot);
+      }
+    } catch {
+      wheelMeshes[i].position.copyFrom(chassisMesh.position).addInPlace(
+        WHEEL_OFFSETS[i].rotateByQuaternionToRef(
+          chassisMesh.rotationQuaternion || BABYLON.Quaternion.Identity(), tmpVec)
+      );
+    }
+  }
+
+  function updateWheelMeshFallback(i) {
+    const rot = chassisMesh.rotationQuaternion || BABYLON.Quaternion.Identity();
+    const localOff = WHEEL_OFFSETS[i].clone();
+    const worldOff = localOff.rotateByQuaternionToRef(rot, new BABYLON.Vector3());
+    wheelMeshes[i].position.copyFrom(chassisMesh.position).addInPlace(worldOff);
+    if (!wheelMeshes[i].rotationQuaternion) {
+      wheelMeshes[i].rotationQuaternion = BABYLON.Quaternion.FromEulerAngles(0, 0, Math.PI / 2);
+    }
+    wheelSpin += (keys.w ? 1 : keys.s ? -1 : 0) * 0.08;
+    const spinQ = BABYLON.Quaternion.FromEulerAngles(wheelSpin, IS_FRONT[i] ? steering * T.steerMax * Math.PI / 180 : 0, Math.PI / 2);
+    wheelMeshes[i].rotationQuaternion.copyFrom(spinQ);
+  }
+
+  // Reset
+  function resetVehicle() {
+    chassisMesh.position.set(0, SPAWN_Y, 0);
+    chassisMesh.rotationQuaternion = BABYLON.Quaternion.Identity();
+    chassisAggregate.body.setLinearVelocity(BABYLON.Vector3.Zero());
+    chassisAggregate.body.setAngularVelocity(BABYLON.Vector3.Zero());
+    steering = 0;
+  }
+
+  document.getElementById('btn-reset').addEventListener('click', resetVehicle);
+
+  // Apply mass/CoM changes
+  function applyMassProperties() {
+    chassisAggregate.body.setMassProperties({
+      mass: T.mass,
+      centerOfMass: new BABYLON.Vector3(0, T.comHeight, 0),
+      inertia: new BABYLON.Vector3(
+        (T.mass / 12) * (CHASSIS_H * CHASSIS_H + CHASSIS_L * CHASSIS_L),
+        (T.mass / 12) * (CHASSIS_W * CHASSIS_W + CHASSIS_L * CHASSIS_L),
+        (T.mass / 12) * (CHASSIS_W * CHASSIS_W + CHASSIS_H * CHASSIS_H)
+      ),
+      inertiaOrientation: BABYLON.Quaternion.Identity(),
+    });
+  }
+
+  // Tuning slider wiring
+  const sliders = [
+    { id: 'suspStiff', label: 'v-suspStiff', decimals: 0 },
+    { id: 'suspDamp',  label: 'v-suspDamp',  decimals: 1 },
+    { id: 'suspComp',  label: 'v-suspComp',  decimals: 1 },
+    { id: 'restLen',   label: 'v-restLen',   decimals: 2 },
+    { id: 'friction',  label: 'v-friction',  decimals: 1 },
+    { id: 'rollInf',   label: 'v-rollInf',   decimals: 2 },
+    { id: 'steerMax',  label: 'v-steerMax',  decimals: 0 },
+    { id: 'engForce',  label: 'v-engForce',  decimals: 0 },
+    { id: 'brakeForce',label: 'v-brakeForce',decimals: 0 },
+    { id: 'hbForce',   label: 'v-hbForce',   decimals: 0 },
+    { id: 'mass',      label: 'v-mass',      decimals: 0 },
+    { id: 'comHeight', label: 'v-comHeight', decimals: 2 },
+  ];
+
+  sliders.forEach(({ id, label, decimals }) => {
+    const slider = document.getElementById('s-' + id);
+    const display = document.getElementById(label);
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+      const val = parseFloat(slider.value);
+      T[id] = val;
+      display.textContent = val.toFixed(decimals);
+      // Re-apply physics properties that affect the rigid body or PhysicsVehicle wheels
+      if (id === 'mass' || id === 'comHeight') applyMassProperties();
+      // Suspension/friction params require a full vehicle rebuild
+      // (no per-param setters in Babylon.js PhysicsVehicle API)
+      if (['suspStiff','suspDamp','suspComp','restLen','friction','rollInf'].includes(id)) rebuildVehicle();
+    });
+  });
+
+  // HUD
+  const speedEl = document.getElementById('speed-val');
+  const stateEl = document.getElementById('state-val');
+
+  // Main game loop
+  const steerSpeed = 0.04;
+  // steerReturn is speed-sensitive: 0.85 at standstill (loose) -> 0.97 at 60+ km/h (snappy)
+  // Uses previous frame's speed - one-frame lag is imperceptible
+  let currentSpeedKmh = 0;
+
+  scene.onBeforeRenderObservable.add(() => {
+    // Steering interpolation - speed-sensitive return-to-centre
+    const steerReturn = 0.85 + 0.12 * Math.min(currentSpeedKmh / 60, 1);
+    const targetSteer = keys.a ? 1 : keys.d ? -1 : 0;
+    if (targetSteer !== 0) {
+      steering = Math.max(-1, Math.min(1, steering + targetSteer * steerSpeed));
+    } else {
+      steering *= steerReturn;
+      if (Math.abs(steering) < 0.001) steering = 0;
+    }
+
+    const steerAngle = steering * (T.steerMax * Math.PI / 180);
+
+    // PhysicsVehicle control path
+    if (vehicle) {
+      const engineForce = keys.w ? T.engForce : keys.s ? -T.engForce * 0.6 : 0;
+      const rollingResistance = (!keys.w && !keys.s) ? T.brakeForce * 0.15 : 0;
+
+      for (let i = 0; i < 4; i++) {
+        if (IS_FRONT[i]) {
+          vehicle.setWheelSteering(steerAngle, i);
+          vehicle.setWheelEngineForce(0, i); // RWD
+          vehicle.setWheelBrake(rollingResistance, i);
+        } else {
+          // Rear wheels - drive + handbrake
+          if (keys.space) {
+            vehicle.setWheelEngineForce(0, i);
+            vehicle.setWheelBrake(T.hbForce, i);
+          } else {
+            vehicle.setWheelEngineForce(engineForce, i);
+            vehicle.setWheelBrake(keys.s ? T.brakeForce : rollingResistance, i);
+          }
+        }
+        updateWheelMeshFromVehicle(i);
+      }
+    } else {
+      // Force fallback (chassis-only, no wheel raycasts)
+      const forward = chassisMesh.getDirection(BABYLON.Axis.Z);
+      const right   = chassisMesh.getDirection(BABYLON.Axis.X);
+      const linVel  = chassisAggregate.body.getLinearVelocity();
+      const speed   = linVel.length();
+
+      if (keys.w) {
+        chassisAggregate.body.applyForce(
+          forward.scale(T.engForce),
+          chassisMesh.getAbsolutePosition()
+        );
+      }
+      if (keys.s) {
+        chassisAggregate.body.applyForce(
+          forward.scale(-T.engForce * 0.6),
+          chassisMesh.getAbsolutePosition()
+        );
+      }
+
+      const steerTorque = steerAngle * speed * 180;
+      if (Math.abs(steerAngle) > 0.01 && speed > 0.5) {
+        chassisAggregate.body.applyAngularImpulse(
+          new BABYLON.Vector3(0, steerTorque * 0.016, 0)
+        );
+      }
+
+      const drag = linVel.scale(-0.02 * T.mass * 0.001);
+      chassisAggregate.body.applyForce(drag, chassisMesh.getAbsolutePosition());
+
+      if (keys.space) {
+        const lat = BABYLON.Vector3.Dot(linVel, right);
+        chassisAggregate.body.applyImpulse(
+          right.scale(-lat * T.mass * 0.3),
+          chassisMesh.getAbsolutePosition()
+        );
+      }
+
+      if (!keys.space) {
+        const lat = BABYLON.Vector3.Dot(linVel, right);
+        chassisAggregate.body.applyImpulse(
+          right.scale(-lat * T.friction * 0.4),
+          chassisMesh.getAbsolutePosition()
+        );
+      }
+
+      for (let i = 0; i < 4; i++) updateWheelMeshFallback(i);
+    }
+
+    // Speed HUD
+    const vel = chassisAggregate.body.getLinearVelocity();
+    currentSpeedKmh = vel.length() * 3.6;
+    const kmh = Math.round(currentSpeedKmh);
+    speedEl.textContent = kmh;
+
+    if (keys.space)       driveState = 'HANDBRAKE';
+    else if (keys.w)      driveState = 'DRIVE';
+    else if (keys.s)      driveState = 'REVERSE';
+    else if (kmh > 2)     driveState = 'COASTING';
+    else                  driveState = 'IDLE';
+    stateEl.textContent = driveState;
+
+    // Camera follow
+    const chassisPos = chassisMesh.position;
+    camTarget = BABYLON.Vector3.Lerp(camTarget, chassisPos, 0.08);
+    followCam.target = camTarget;
+
+    if (camMode === 1) {
+      const chassisRot = chassisMesh.rotationQuaternion || BABYLON.Quaternion.Identity();
+      const worldOffset = chaseOffset.rotateByQuaternionToRef(chassisRot, new BABYLON.Vector3());
+      const desiredPos = chassisPos.add(worldOffset);
+      followCam.position = BABYLON.Vector3.Lerp(followCam.position, desiredPos, 0.06);
+    }
+  });
+
+  // Render loop
+  setLoad(95, 'Starting render loop...');
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+
+  // Show UI
+  setLoad(100, 'Ready');
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('hud').style.display      = 'block';
+  document.getElementById('tuning').style.display   = 'block';
+  document.getElementById('controls').style.display = 'block';
+
+  console.log('[Harness] Ready. Vehicle mode:', vehicle ? 'PhysicsVehicle (Havok)' : 'Force fallback');
+})();
+</script>
+</body>
+</html>
