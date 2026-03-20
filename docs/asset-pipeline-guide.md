@@ -292,7 +292,7 @@ Per-tile draw call budget is ≤40. Instancing is required to stay under this li
 
 ### Tagging Requirements
 
-1. **Semantic, stable IDs** — Use human-readable strings like `"prop.fire_hydrant.standard"` or `"prop.bench.park"`. IDs must be stable across pipeline rebuilds. Do not use auto-generated or hash-based IDs; auto-generated IDs break on rebuild. Maintain a central props registry mapping IDs to asset names.
+1. **Semantic, stable IDs** — Use human-readable strings like `"prop.fire_hydrant.standard"` or `"prop.bench.park"`. IDs must be stable across pipeline rebuilds. Do not auto-generate or hash-based IDs; auto-generated IDs break on rebuild. Maintain a central props registry mapping IDs to asset names.
 2. **Assign at asset authoring time** — Include in the asset metadata (JSON sidecar or embedded in GLB metadata)
 3. **Document the mapping** — Central registry: `instanceTypeId → asset name → visual description`
 4. **Validate at import** — Asset validator checks that all props have an instanceTypeId; rejects those without
@@ -384,7 +384,8 @@ The asset import validator is the final gate before assets enter the world. It e
 - [ ] Collision hull AABB doesn't exceed visual mesh AABB by >5% in any dimension
 - [ ] If asset is Class 4 (props): instanceTypeId is present, semantic, and stable
 - [ ] If asset is Class 4 (props): uses box or capsule collision only (no mesh colliders)
-- [ ] Impostor textures (Class 1): pre-baked from LOD0, 4K resolution, billboard geometry
+- [ ] Impostor atlas (Class 1, generic towers): 2048×2048, 8 angles packed into one atlas, pipeline-generated
+- [ ] Impostor atlas (Class 1, landmark towers, ~20 buildings): 4096×4096, hand-authored
 
 #### Per-Tile Validation
 
@@ -478,17 +479,21 @@ Asset Author (3D Artist)
   ↓
 [Author LOD models + collision mesh in Blender]
   ↓
-Export as GLB (render) + GLB (collision)
+Export as GLB (render) + GLB (collision) [per-asset]
   ↓
-Export → Asset processor (Draco compression, KTX2 encoding)
+Asset processor: Draco compression, KTX2 encoding [per-asset]
   ↓
-[VALIDATION GATE 1: Vertex budgets, texture formats, instanceTypeId]
+[VALIDATION GATE 1: Per-asset vertex budgets, texture formats, instanceTypeId]
   ↓
-Asset validated → CDN upload (content-hashed filename)
+Tile baking: merge all assets within 64m×64m tile bounds → one tile GLB,
+             atlas textures → 1 albedo / 1 normal / 1 ORM per tile,
+             update UVs to match atlas layout [per-tile]
   ↓
-[VALIDATION GATE 2: Manifest updated, per-tile budget check]
+[VALIDATION GATE 2: Per-tile draw call budget ≤40, total verts ≤31,500]
   ↓
-Game client → Streaming worker fetches from CDN
+CDN upload (tile GLB, content-hashed filename)
+  ↓
+Game client → Streaming worker fetches tile from CDN
   ↓
 [VALIDATION GATE 3: Draco decompression, KTX2 decode, buffer allocation]
   ↓
@@ -536,7 +541,7 @@ Too many unique prop types or geometry in the tile. Either reduce prop density, 
 
 ### "impostor bitmap missing for large building"
 
-Class 1 assets require pre-baked impostor billboards. Generate 8-angle impostor atlases at build time using the LOD0 render mesh. Standalone landmarks (~20) should have hand-authored 4K impostors.
+Class 1 assets require pre-baked impostor billboards. Generic towers: 8-angle 2K atlases, pipeline-generated. Landmark towers (~20): 4K impostors, hand-authored.
 
 ---
 
@@ -544,7 +549,7 @@ Class 1 assets require pre-baked impostor billboards. Generate 8-angle impostor 
 
 - **For art teams:** Use this guide to author and validate assets. Run each asset through the validator before committing.
 - **For pipeline engineers:** Implement the validation checks in the asset import tool. Use the rejection criteria above as test cases.
-- **For rendering engineers (Lux):** Review technical accuracy of texture and geometry compression requirements. Flag any gaps or changes to the spec.
+- **For rendering engineers (Lux):** Technical accuracy reviewed and signed off. Flag any changes that emerge during pipeline build.
 
 ---
 
@@ -553,4 +558,5 @@ Class 1 assets require pre-baked impostor billboards. Generate 8-angle impostor 
 - `/docs/architecture-guide.md` — Rationale for design decisions
 
 **Last updated:** 2026-03-20
+**Lux sign-off:** Confirmed
 **Next review:** When pipeline tooling build begins
