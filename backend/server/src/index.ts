@@ -17,7 +17,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 // Per-request auth is validated manually via the user's JWT.
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
-// ── App ────────────────────────────────────────────────────
+// ── App ─────────────────────────────────────────────────────
 const app = new Hono()
 
 // Required security headers on every response (mandatory for SharedArrayBuffer)
@@ -28,50 +28,61 @@ app.use('*', async (c, next) => {
 })
 
 // ── Auth helper ────────────────────────────────────────────
-/**
- * Validates the Bearer token and returns the Supabase user.
- * Returns null if the token is missing or invalid.
- */
-async function getAuthUser(authHeader: string | undefined) {
-  if (!authHeader?.startsWith('Bearer ')) return null
-  const token = authHeader.slice(7)
-  const { data, error } = await supabase.auth.getUser(token)
-  if (error || !data.user) return null
-  return data.user
+const LOCAL_DEV = process.env.LOCAL_DEV === 'true'
+
+if (LOCAL_DEV) {
+  console.warn('⚠️  LOCAL_DEV mode enabled — mock auth active, do not use in production')
 }
 
 /**
- * Resolves a Supabase auth user ID to the internal players.id UUID.
- */
-async function getPlayerId(authUserId: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('players')
-    .select('id')
-    .eq('auth_user_id', authUserId)
-    .single()
-  if (error || !data) return null
-  return data.id
-}
-
-/**
- * Validates auth and confirms the requesting user owns the player_id in the path.
- * Returns { playerId } on success, or sends a 401/403 response and returns null.
+ * In LOCAL_DEV mode: accepts any Bearer token, uses the token value as player_id.
+ * In production: validates against Supabase Auth and resolves to internal player UUID.
  */
 async function requireAuth(c: any, pathPlayerId: string): Promise<{ playerId: string } | null> {
-  const user = await getAuthUser(c.req.header('Authorization'))
-  if (!user) {
+  if (LOCAL_DEV) {
+    const authHeader = c.req.header('Authorization') ?? ''
+    if (!authHeader.startsWith('Bearer ')) {
+      c.status(401)
+      return null
+    }
+    // In local dev, the token IS the player_id — simple test isolation
+    const tokenPlayerId = authHeader.slice(7)
+    if (tokenPlayerId !== pathPlayerId) {
+      c.status(403)
+      return null
+    }
+    return { playerId: pathPlayerId }
+  }
+
+  // Production: validate Supabase JWT
+  const authHeader = c.req.header('Authorization')
+  if (!authHeader?.startsWith('Bearer ')) {
     c.status(401)
     return null
   }
-  const playerId = await getPlayerId(user.id)
-  if (!playerId || playerId !== pathPlayerId) {
+  const token = authHeader.slice(7)
+  const { data, error } = await supabase.auth.getUser(token)
+  if (error || !data.user) {
+    c.status(401)
+    return null
+  }
+
+  // Resolve auth user → internal player ID
+  const { data: player, error: playerError } = await supabase
+    .from('players')
+    .select('id')
+    .eq('auth_user_id', data.user.id)
+    .single()
+
+  if (playerError || !player || player.id !== pathPlayerId) {
     c.status(403)
     return null
   }
-  return { playerId }
+
+  return { playerId: player.id }
 }
 
-// ── GET /api/v1/saves/:player_id ───────────────────────────
+// ── GET /api/v1/saves/:player_id ────────────────────────────
 app.get('/api/v1/saves/:player_id', async (c) => {
   const pathPlayerId = c.req.param('player_id')
   const auth = await requireAuth(c, pathPlayerId)
@@ -103,7 +114,7 @@ app.post('/api/v1/saves/:player_id', async (c) => {
 
   // Reject oversized payloads
   const contentLength = parseInt(c.req.header('content-length') ?? '0')
-  if (contentLength > MAX_SAVE_BYTES) {
+  if (contentLength > MAX_SAVE_BYTE) {
     return c.json({ error: 'payload_too_large', max_bytes: MAX_SAVE_BYTES }, 413)
   }
 
@@ -313,8 +324,8 @@ app.get('/api/v1/profile/:player_id', async (c) => {
   })
 })
 
-// ── Start ──────────────────────────────────────────────────
-console.log(`🚀 GTA6 backend starting on port ${PORT}`)
+// ── Start ───────────────────────────────────────────────────
+console.log(`🚂 GTA6 backend starting on port ${PORT}`)
 export default {
   port: PORT,
   fetch: app.fetch,
