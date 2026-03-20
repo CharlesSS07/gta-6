@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Streets of Angels — M001: First Errand</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0a; overflow: hidden; font-family: 'Courier New', monospace; }
+    #renderCanvas { width: 100vw; height: 100vh; display: block; touch-action: none; }
+
+    #loading {
+      position: fixed; inset: 0; background: #0a0a0a;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #00ff88; font-size: 14px; letter-spacing: 2px; z-index: 100;
+    }
+    #loading .bar-wrap { width: 200px; height: 2px; background: #1a1a1a; margin-top: 20px; border-radius: 1px; }
+    #loading .bar { height: 100%; background: #00ff88; border-radius: 1px; transition: width 0.3s; }
+    #loading .sub { color: #444; font-size: 10px; margin-top: 10px; }
+
+    #hud {
+      position: fixed; top: 20px; left: 20px;
+      color: #00ff88; font-size: 14px; pointer-events: none;
+      text-shadow: 0 0 8px #00ff8866;
+    }
+    #hud .label { color: #667; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+    #speed-val { font-size: 32px; font-weight: bold; line-height: 1; }
+    #hud .unit  { font-size: 12px; color: #555; }
+    #state-val  { margin-top: 8px; font-size: 13px; color: #ff9900; }
+
+    #wallet {
+      position: fixed; top: 20px; right: 20px;
+      color: #00ff88; font-size: 16px; font-weight: bold; pointer-events: none;
+      text-shadow: 0 0 8px #00ff8866;
+    }
+    #wallet-delta {
+      position: fixed; top: 44px; right: 20px;
+      color: #00ff88; font-size: 22px; font-weight: bold; pointer-events: none;
+      opacity: 0; transition: opacity 0.3s;
+      text-shadow: 0 0 12px #00ff88;
+    }
+
+    #mission-panel {
+      position: fixed; bottom: 60px; left: 20px;
+      background: rgba(0,0,0,0.75); border-left: 3px solid #ff9900;
+      padding: 10px 14px; color: #ccc; font-size: 12px; pointer-events: none;
+      min-width: 240px;
+    }
+    #mission-panel .mission-title { color: #ff9900; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; }
+    #mission-panel .mission-step  { color: #aaa; font-size: 12px; line-height: 1.5; }
+    #mission-panel .mission-step.done { color: #444; text-decoration: line-through; }
+
+    #waypoint-hud {
+      position: fixed; bottom: 60px; right: 20px;
+      text-align: right; pointer-events: none;
+    }
+    #waypoint-label { color: #ffff00; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; }
+    #waypoint-dist  { color: #ffff00; font-size: 28px; font-weight: bold; line-height: 1; text-shadow: 0 0 10px #ffff0077; }
+    #waypoint-unit  { color: #887700; font-size: 11px; }
+
+    #phone-notification {
+      position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+      background: rgba(10, 10, 10, 0.96); border: 1px solid #333;
+      border-radius: 12px; padding: 16px 20px; max-width: 340px; width: 90%;
+      color: #eee; font-size: 13px; line-height: 1.6;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.8);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 50;
+    }
+    #phone-notification.visible { opacity: 1; pointer-events: auto; }
+    #phone-notification .notif-from { color: #00ff88; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+    #phone-notification .notif-msg  { color: #ddd; }
+    #phone-notification .notif-dismiss {
+      display: block; margin-top: 12px; text-align: center;
+      color: #555; font-size: 10px; letter-spacing: 1px; cursor: pointer;
+      border-top: 1px solid #1a1a1a; padding-top: 8px;
+    }
+    #phone-notification .notif-dismiss:hover { color: #aaa; }
+
+    #enter-prompt {
+      position: fixed; bottom: 160px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.85); border: 1px solid #444;
+      border-radius: 6px; padding: 10px 18px;
+      color: #ccc; font-size: 12px; letter-spacing: 1px;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s;
+      text-align: center;
+    }
+    #enter-prompt.visible { opacity: 1; }
+    #enter-prompt .key { display: inline-block; background: #333; border: 1px solid #555; padding: 1px 6px; border-radius: 3px; color: #fff; font-size: 11px; }
+
+    #mission-complete {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.7);
+      opacity: 0; pointer-events: none; transition: opacity 0.5s;
+      z-index: 60;
+    }
+    #mission-complete.visible { opacity: 1; }
+    #mission-complete .complete-title { color: #00ff88; font-size: 32px; font-weight: bold; letter-spacing: 4px; text-shadow: 0 0 20px #00ff88; }
+    #mission-complete .complete-reward { color: #ffff00; font-size: 22px; margin-top: 10px; }
+    #mission-complete .complete-msg   { color: #888; font-size: 13px; margin-top: 16px; letter-spacing: 1px; }
+
+    #controls {
+      position: fixed; bottom: 20px; left: 20px;
+      color: #444; font-size: 11px; pointer-events: none; line-height: 1.8;
+    }
+    .key { display: inline-block; background: #1a1a1a; border: 1px solid #333; padding: 1px 5px; border-radius: 3px; color: #888; font-size: 10px; }
+  </style>
+</head>
+<body>
+
+<canvas id="renderCanvas"></canvas>
+
+<div id="loading">
+  <div>STREETS OF ANGELS</div>
+  <div style="color:#444;font-size:11px;margin-top:6px;letter-spacing:3px">M001 — FIRST ERRAND</div>
+  <div class="bar-wrap"><div class="bar" id="loadBar" style="width:0%"></div></div>
+  <div class="sub" id="loadStatus">Initialising…</div>
+</div>
+
+<div id="hud" style="display:none">
+  <div class="label">speed</div>
+  <div><span id="speed-val">0</span><span class="unit"> km/h</span></div>
+  <div id="state-val">IDLE</div>
+</div>
+
+<div id="wallet" style="display:none">$<span id="wallet-val">0</span></div>
+<div id="wallet-delta" style="display:none">+$200</div>
+
+<div id="mission-panel" style="display:none">
+  <div class="mission-title">M001 — First Errand</div>
+  <div class="mission-step" id="step-notify">&#9312; Ray's job: check your phone</div>
+  <div class="mission-step" id="step-nav-a">&#9313; Drive to the parking structure (5th &amp; Olive)</div>
+  <div class="mission-step" id="step-steal">&#9314; Enter the Blue Civic (Level 3)</div>
+  <div class="mission-step" id="step-deliver">&#9315; Deliver to the lot (Alameda &amp; 7th)</div>
+</div>
+
+<div id="waypoint-hud" style="display:none">
+  <div id="waypoint-label">WAYPOINT A</div>
+  <div><span id="waypoint-dist">---</span> <span id="waypoint-unit">m</span></div>
+</div>
+
+<div id="phone-notification">
+  <div class="notif-from">&#128242; Ray</div>
+  <div class="notif-msg">Blue Civic, Level 3 of the structure on 5th &amp; Olive. Lot on Alameda by 7th. $200. Don't scratch it.</div>
+  <span class="notif-dismiss" id="notif-dismiss">[ Dismiss ]</span>
+</div>
+
+<div id="enter-prompt"><span class="key">E</span> &nbsp;Enter the Blue Civic</div>
+
+<div id="mission-complete">
+  <div class="complete-title">MISSION COMPLETE</div>
+  <div class="complete-reward">+$200</div>
+  <div class="complete-msg" id="complete-msg">Ray: Nice. Check your wallet.</div>
+</div>
+
+<div id="controls" style="display:none">
+  <span class="key">W/S</span> Throttle/Brake &nbsp;
+  <span class="key">A/D</span> Steer &nbsp;
+  <span class="key">SPACE</span> Handbrake &nbsp;
+  <span class="key">E</span> Enter vehicle &nbsp;
+  <span class="key">R</span> Reset &nbsp;
+  <span class="key">C</span> Cam
+</div>
+
+<script src="https://cdn.babylonjs.com/havok/HavokPhysics.js"></script>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+
+<script>
+(async () => {
+
+  const loadBar    = document.getElementById('loadBar');
+  const loadStatus = document.getElementById('loadStatus');
+  function setLoad(pct, msg) {
+    loadBar.style.width = pct + '%';
+    loadStatus.textContent = msg;
+  }
+
+  const canvas = document.getElementById('renderCanvas');
+  const engine = new BABYLON.Engine(canvas, true, {
+    preserveDrawingBuffer: true, stencil: true, antialias: true,
+  });
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.08, 0.08, 0.09, 1);
+
+  setLoad(20, 'Loading Havok WASM…');
+  const havokInstance = await HavokPhysics();
+  setLoad(50, 'Initialising physics…');
+  const havokPlugin = new BABYLON.HavokPlugin(true, havokInstance);
+  scene.enablePhysics(new BABYLON.Vector3(0, -9.81, 0), havokPlugin);
+  setLoad(65, 'Building scene…');
+
+  const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
+  hemi.intensity = 0.6;
+  hemi.groundColor = new BABYLON.Color3(0.1, 0.1, 0.12);
+  const sun = new BABYLON.DirectionalLight('sun', new BABYLON.Vector3(-1, -2.5, -1).normalize(), scene);
+  sun.intensity = 1.2;
+  sun.position = new BABYLON.Vector3(50, 100, 50);
+  const shadowGen = new BABYLON.ShadowGenerator(1024, sun);
+  shadowGen.useBlurExponentialShadowMap = true;
+
+  const ground = BABYLON.MeshBuilder.CreateGround('ground', { width: 800, height: 800, subdivisions: 1 }, scene);
+  const gridMat = new BABYLON.GridMaterial ? new BABYLON.GridMaterial('grid', scene) : null;
+  if (gridMat) {
+    gridMat.majorUnitFrequency = 10; gridMat.minorUnitVisibility = 0.15;
+    gridMat.gridRatio = 1;
+    gridMat.mainColor  = new BABYLON.Color3(0.25, 0.25, 0.27);
+    gridMat.lineColor  = new BABYLON.Color3(0.12, 0.12, 0.14);
+    gridMat.opacity    = 0.8;
+    ground.material    = gridMat;
+  } else {
+    const gm = new BABYLON.StandardMaterial('gm', scene);
+    gm.diffuseColor = new BABYLON.Color3(0.22, 0.22, 0.24);
+    ground.material = gm;
+  }
+  ground.receiveShadows = true;
+  new BABYLON.PhysicsAggregate(ground, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.9, restitution: 0.1 }, scene);
+
+  const wallH = 6, wallL = 800;
+  [
+    { pos: new BABYLON.Vector3(0, wallH/2,  400), rot: BABYLON.Vector3.Zero() },
+    { pos: new BABYLON.Vector3(0, wallH/2, -400), rot: BABYLON.Vector3.Zero() },
+    { pos: new BABYLON.Vector3( 400, wallH/2, 0), rot: new BABYLON.Vector3(0, Math.PI/2, 0) },
+    { pos: new BABYLON.Vector3(-400, wallH/2, 0), rot: new BABYLON.Vector3(0, Math.PI/2, 0) },
+  ].forEach(({ pos, rot }) => {
+    const w = BABYLON.MeshBuilder.CreateBox('wall', { width: wallL, height: wallH, depth: 0.5 }, scene);
+    w.position.copyFrom(pos); w.rotation.copyFrom(rot); w.isVisible = false;
+    new BABYLON.PhysicsAggregate(w, BABYLON.PhysicsShapeType.BOX, { mass: 0 }, scene);
+  });
+
+  const SPAWN_POS = new BABYLON.Vector3(0, 2, 0);
+
+  // TODO: wire to road graph — real LA coords (5th & Olive, Alameda @ 7th)
+  // Placeholder offsets tuned for stub geometry; replace when tile pipeline delivers downtown LA
+  // ETA: April 14 checkpoint
+  const WAYPOINT_A_POS  = SPAWN_POS.add(new BABYLON.Vector3(120, 0,  80));
+  const SEDAN_SPAWN_POS = SPAWN_POS.add(new BABYLON.Vector3(120, 0,  85));
+  const WAYPOINT_B_POS  = SPAWN_POS.add(new BABYLON.Vector3(-150, 0, 200));
+
+  const WAYPOINT_A_RADIUS  = 18;
+  const WAYPOINT_B_RADIUS  = 18;
+  const ENTER_SEDAN_RADIUS = 6;
+  const ABANDON_RADIUS     = 50;
+
+  const VEHICLE_W = 1.9, VEHICLE_H = 0.65, VEHICLE_L = 4.2;
+  const SPAWN_Y   = 2.0;
+
+  const T = {
+    mass: 1400, engForce: 2100, brakeForce: 60, hbForce: 140,
+    steerMax: 30, friction: 1.8, comHeight: -0.2,
+  };
+
+  function buildVehicle(name, color, spawnPos) {
+    const mesh = BABYLON.MeshBuilder.CreateBox(name, {
+      width: VEHICLE_W, height: VEHICLE_H, depth: VEHICLE_L,
+    }, scene);
+    const mat = new BABYLON.StandardMaterial(name + 'Mat', scene);
+    mat.diffuseColor = color;
+    mesh.material = mat;
+    mesh.position.copyFrom(spawnPos);
+    shadowGen.addShadowCaster(mesh);
+
+    const cab = BABYLON.MeshBuilder.CreateBox(name + 'Cab', { width: 1.6, height: 0.4, depth: 2.0 }, scene);
+    cab.material = mat; cab.parent = mesh; cab.position.set(0, 0.52, 0.2);
+
+    const wheels = [];
+    const wOffsets = [
+      new BABYLON.Vector3(-VEHICLE_W * 0.52, -0.15,  VEHICLE_L * 0.38),
+      new BABYLON.Vector3( VEHICLE_W * 0.52, -0.15,  VEHICLE_L * 0.38),
+      new BABYLON.Vector3(-VEHICLE_W * 0.52, -0.15, -VEHICLE_L * 0.38),
+      new BABYLON.Vector3( VEHICLE_W * 0.52, -0.15, -VEHICLE_L * 0.38),
+    ];
+    wOffsets.forEach((off, i) => {
+      const wm = BABYLON.MeshBuilder.CreateCylinder(name + 'W' + i, {
+        diameter: 0.35 * 2, height: 0.28, tessellation: 12,
+      }, scene);
+      const wMat = new BABYLON.StandardMaterial(name + 'WMat' + i, scene);
+      wMat.diffuseColor = new BABYLON.Color3(0.08, 0.08, 0.10);
+      wm.material = wMat;
+      wm.rotation.z = Math.PI / 2;
+      shadowGen.addShadowCaster(wm);
+      wheels.push({ mesh: wm, offset: off, isFront: i < 2 });
+    });
+
+    const aggregate = new BABYLON.PhysicsAggregate(
+      mesh, BABYLON.PhysicsShapeType.BOX,
+      { mass: T.mass, friction: 0.5, restitution: 0.15 }, scene
+    );
+    aggregate.body.setMassProperties({
+      mass: T.mass,
+      centerOfMass: new BABYLON.Vector3(0, T.comHeight, 0),
+      inertia: new BABYLON.Vector3(
+        (T.mass / 12) * (VEHICLE_H ** 2 + VEHICLE_L ** 2),
+        (T.mass / 12) * (VEHICLE_W ** 2 + VEHICLE_L ** 2),
+        (T.mass / 12) * (VEHICLE_W ** 2 + VEHICLE_H ** 2)
+      ),
+      inertiaOrientation: BABYLON.Quaternion.Identity(),
+    });
+
+    return { mesh, aggregate, wheels };
+  }
+
+  setLoad(75, 'Spawning vehicles…');
+
+  const spawnVehicle  = buildVehicle('spawn', new BABYLON.Color3(0.55, 0.55, 0.60), SPAWN_POS);
+  const targetVehicle = buildVehicle('sedan', new BABYLON.Color3(0.10, 0.35, 0.85), SEDAN_SPAWN_POS);
+  targetVehicle.aggregate.body.setMotionType(BABYLON.PhysicsMotionType.STATIC);
+
+  let activeVehicle   = spawnVehicle;
+  let inTargetVehicle = false;
+
+  function makeWaypointMarker(pos, color) {
+    const cone = BABYLON.MeshBuilder.CreateCylinder('wp_' + pos.x, {
+      diameterTop: 0, diameterBottom: 2.5, height: 5, tessellation: 8,
+    }, scene);
+    const mat = new BABYLON.StandardMaterial('wpm_' + pos.x, scene);
+    mat.diffuseColor = color;
+    mat.emissiveColor = color.scale(0.5);
+    mat.alpha = 0.55;
+    cone.material = mat;
+    cone.position.set(pos.x, pos.y + 2.5, pos.z);
+    return cone;
+  }
+
+  const markerA = makeWaypointMarker(WAYPOINT_A_POS, new BABYLON.Color3(1, 1, 0));
+  const markerB = makeWaypointMarker(WAYPOINT_B_POS, new BABYLON.Color3(0, 1, 0.4));
+  markerA.isVisible = false;
+  markerB.isVisible = false;
+
+  let blinkTimer = 0;
+
+  const keys = { w: false, s: false, a: false, d: false, space: false };
+  window.addEventListener('keydown', e => {
+    const k = e.code;
+    if (k === 'KeyW' || k === 'ArrowUp')    { keys.w = true;     e.preventDefault(); }
+    if (k === 'KeyS' || k === 'ArrowDown')  { keys.s = true;     e.preventDefault(); }
+    if (k === 'KeyA' || k === 'ArrowLeft')  { keys.a = true;     e.preventDefault(); }
+    if (k === 'KeyD' || k === 'ArrowRight') { keys.d = true;     e.preventDefault(); }
+    if (k === 'Space')                      { keys.space = true; e.preventDefault(); }
+    if (k === 'KeyR') resetActive();
+    if (k === 'KeyC') toggleCamera();
+    if (k === 'KeyE') tryEnterSedan();
+  });
+  window.addEventListener('keyup', e => {
+    const k = e.code;
+    if (k === 'KeyW' || k === 'ArrowUp')    keys.w     = false;
+    if (k === 'KeyS' || k === 'ArrowDown')  keys.s     = false;
+    if (k === 'KeyA' || k === 'ArrowLeft')  keys.a     = false;
+    if (k === 'KeyD' || k === 'ArrowRight') keys.d     = false;
+    if (k === 'Space')                      keys.space = false;
+  });
+
+  const followCam = new BABYLON.ArcRotateCamera('follow', -Math.PI / 2, Math.PI / 4, 18, BABYLON.Vector3.Zero(), scene);
+  followCam.lowerRadiusLimit = 5; followCam.upperRadiusLimit = 40;
+  followCam.lowerBetaLimit = 0.1; followCam.upperBetaLimit = Math.PI / 2.2;
+  followCam.attachControl(canvas, true);
+  scene.activeCamera = followCam;
+
+  let camMode = 0;
+  const chaseOffset = new BABYLON.Vector3(0, 4, -12);
+  let camTarget = BABYLON.Vector3.Zero();
+  function toggleCamera() { camMode = 1 - camMode; }
+
+  function resetActive() {
+    const v = activeVehicle;
+    v.mesh.position.set(SPAWN_POS.x, SPAWN_Y, SPAWN_POS.z);
+    v.mesh.rotationQuaternion = BABYLON.Quaternion.Identity();
+    v.aggregate.body.setLinearVelocity(BABYLON.Vector3.Zero());
+    v.aggregate.body.setAngularVelocity(BABYLON.Vector3.Zero());
+    steering = 0;
+  }
+
+  function tryEnterSedan() {
+    if (inTargetVehicle) return;
+    if (mission.state !== 'NAV_A' && mission.state !== 'STEAL') return;
+    const dist = BABYLON.Vector3.Distance(
+      activeVehicle.mesh.position, targetVehicle.mesh.position
+    );
+    if (dist > ENTER_SEDAN_RADIUS) return;
+    inTargetVehicle = true;
+    activeVehicle = targetVehicle;
+    targetVehicle.aggregate.body.setMotionType(BABYLON.PhysicsMotionType.DYNAMIC);
+    targetVehicle.aggregate.body.setLinearVelocity(BABYLON.Vector3.Zero());
+    targetVehicle.aggregate.body.setAngularVelocity(BABYLON.Vector3.Zero());
+    document.getElementById('enter-prompt').classList.remove('visible');
+    advanceMission('SEDAN_ENTERED');
+  }
+
+  const mission = {
+    state: 'IDLE',
+    abandonWarningCooldown: 0,
+  };
+
+  const UIsteps = {
+    notify:  document.getElementById('step-notify'),
+    navA:    document.getElementById('step-nav-a'),
+    steal:   document.getElementById('step-steal'),
+    deliver: document.getElementById('step-deliver'),
+  };
+
+  function markStepDone(el) { el.classList.add('done'); }
+
+  function advanceMission(trigger) {
+    switch (mission.state) {
+      case 'IDLE':
+        mission.state = 'NOTIFYING';
+        showNotification();
+        break;
+      case 'NOTIFYING':
+        markStepDone(UIsteps.notify);
+        mission.state = 'NAV_A';
+        markerA.isVisible = true;
+        updateWaypointHUD('A', WAYPOINT_A_POS);
+        document.getElementById('waypoint-hud').style.display = 'block';
+        break;
+      case 'NAV_A':
+        if (trigger === 'REACH_A') {
+          markerA.isVisible = false;
+          markStepDone(UIsteps.navA);
+          mission.state = 'STEAL';
+          document.getElementById('waypoint-hud').style.display = 'none';
+        } else if (trigger === 'SEDAN_ENTERED') {
+          markerA.isVisible = false;
+          markStepDone(UIsteps.navA);
+          markStepDone(UIsteps.steal);
+          mission.state = 'NAV_B';
+          markerB.isVisible = true;
+          updateWaypointHUD('B', WAYPOINT_B_POS);
+          document.getElementById('waypoint-hud').style.display = 'block';
+        }
+        break;
+      case 'STEAL':
+        if (trigger === 'SEDAN_ENTERED') {
+          markStepDone(UIsteps.steal);
+          mission.state = 'NAV_B';
+          markerB.isVisible = true;
+          updateWaypointHUD('B', WAYPOINT_B_POS);
+          document.getElementById('waypoint-hud').style.display = 'block';
+        }
+        break;
+      case 'NAV_B':
+        if (trigger === 'REACH_B') {
+          markStepDone(UIsteps.deliver);
+          mission.state = 'COMPLETE';
+          completeMission();
+        }
+        break;
+    }
+  }
+
+  let notifDismissTimer = null;
+  function showNotification() {
+    const el = document.getElementById('phone-notification');
+    el.classList.add('visible');
+    notifDismissTimer = setTimeout(() => dismissNotification(), 6000);
+  }
+  function dismissNotification() {
+    clearTimeout(notifDismissTimer);
+    document.getElementById('phone-notification').classList.remove('visible');
+    advanceMission('DISMISSED');
+  }
+  document.getElementById('notif-dismiss').addEventListener('click', dismissNotification);
+
+  let walletBalance = 0;
+  function completeMission() {
+    markerB.isVisible = false;
+    document.getElementById('waypoint-hud').style.display = 'none';
+    walletBalance += 200;
+    document.getElementById('wallet-val').textContent = walletBalance;
+    const delta = document.getElementById('wallet-delta');
+    delta.style.display = 'block';
+    delta.style.opacity = '1';
+    document.getElementById('mission-complete').classList.add('visible');
+    setTimeout(() => {
+      delta.style.opacity = '0';
+      setTimeout(() => { delta.style.display = 'none'; }, 400);
+    }, 3000);
+  }
+
+  let _waypointTarget = null;
+  function updateWaypointHUD(label, targetPos) {
+    document.getElementById('waypoint-label').textContent = 'WAYPOINT ' + label;
+    _waypointTarget = targetPos;
+  }
+  function refreshWaypointDist() {
+    if (!_waypointTarget) return;
+    const dist = Math.round(BABYLON.Vector3.Distance(activeVehicle.mesh.position, _waypointTarget));
+    document.getElementById('waypoint-dist').textContent = dist;
+  }
+
+  let steering = 0;
+  let wheelSpin = 0;
+  let driveState = 'IDLE';
+  let currentSpeedKmh = 0;
+
+  function applyForceModel(v, steerAngle) {
+    const forward = v.mesh.getDirection(BABYLON.Axis.Z);
+    const right   = v.mesh.getDirection(BABYLON.Axis.X);
+    const linVel  = v.aggregate.body.getLinearVelocity();
+    const speed   = linVel.length();
+    if (keys.w) v.aggregate.body.applyForce(forward.scale(T.engForce),        v.mesh.getAbsolutePosition());
+    if (keys.s) v.aggregate.body.applyForce(forward.scale(-T.engForce * 0.6), v.mesh.getAbsolutePosition());
+    const steerTorque = steerAngle * speed * 180;
+    if (Math.abs(steerAngle) > 0.01 && speed > 0.5) {
+      v.aggregate.body.applyAngularImpulse(new BABYLON.Vector3(0, steerTorque * 0.016, 0));
+    }
+    const drag = linVel.scale(-0.02 * T.mass * 0.001);
+    v.aggregate.body.applyForce(drag, v.mesh.getAbsolutePosition());
+    if (keys.space) {
+      const lat = BABYLON.Vector3.Dot(linVel, right);
+      const hbFactor = (T.hbForce / 230) * T.mass * 0.3;
+      v.aggregate.body.applyImpulse(right.scale(-lat * hbFactor), v.mesh.getAbsolutePosition());
+    } else {
+      const lat = BABYLON.Vector3.Dot(linVel, right);
+      v.aggregate.body.applyImpulse(right.scale(-lat * T.friction * 0.4), v.mesh.getAbsolutePosition());
+    }
+  }
+
+  function updateWheelMeshes(v, steerAngle) {
+    const rot = v.mesh.rotationQuaternion || BABYLON.Quaternion.Identity();
+    wheelSpin += (keys.w ? 1 : keys.s ? -1 : 0) * 0.08;
+    v.wheels.forEach(w => {
+      const worldOff = w.offset.rotateByQuaternionToRef(rot, new BABYLON.Vector3());
+      w.mesh.position.copyFrom(v.mesh.position).addInPlace(worldOff);
+      const spinQ = BABYLON.Quaternion.FromEulerAngles(wheelSpin, w.isFront ? steerAngle : 0, Math.PI / 2);
+      if (!w.mesh.rotationQuaternion) w.mesh.rotationQuaternion = spinQ.clone();
+      else w.mesh.rotationQuaternion.copyFrom(spinQ);
+    });
+  }
+
+  let sceneTime  = 0;
+  let notifFired = false;
+
+  scene.onBeforeRenderObservable.add(() => {
+    const dt = engine.getDeltaTime() / 1000;
+    sceneTime += dt;
+    blinkTimer += dt;
+
+    const steerReturn = 0.85 + 0.12 * Math.min(currentSpeedKmh / 60, 1);
+    const targetSteer = keys.a ? 1 : keys.d ? -1 : 0;
+    if (targetSteer !== 0) {
+      steering = Math.max(-1, Math.min(1, steering + targetSteer * 0.04));
+    } else {
+      steering *= steerReturn;
+      if (Math.abs(steering) < 0.001) steering = 0;
+    }
+    const steerAngle = steering * (T.steerMax * Math.PI / 180);
+
+    applyForceModel(activeVehicle, steerAngle);
+    updateWheelMeshes(activeVehicle, steerAngle);
+
+    const vel = activeVehicle.aggregate.body.getLinearVelocity();
+    currentSpeedKmh = vel.length() * 3.6;
+    document.getElementById('speed-val').textContent = Math.round(currentSpeedKmh);
+    if (keys.space)           driveState = '▶ HANDBRAKE';
+    else if (keys.w)          driveState = '▶ DRIVE';
+    else if (keys.s)          driveState = '◀ REVERSE';
+    else if (currentSpeedKmh > 2) driveState = '— COASTING';
+    else                      driveState = '— IDLE';
+    document.getElementById('state-val').textContent = driveState;
+
+    if (!notifFired && sceneTime >= 3.0 && mission.state === 'IDLE') {
+      notifFired = true;
+      advanceMission('TIMER_3S');
+    }
+
+    if (mission.state === 'NAV_A' || mission.state === 'STEAL') {
+      const distToA = BABYLON.Vector3.Distance(activeVehicle.mesh.position, WAYPOINT_A_POS);
+      if (mission.state === 'NAV_A' && distToA < WAYPOINT_A_RADIUS) {
+        advanceMission('REACH_A');
+      }
+      const distToSedan = BABYLON.Vector3.Distance(activeVehicle.mesh.position, targetVehicle.mesh.position);
+      const enterPromptEl = document.getElementById('enter-prompt');
+      if (!inTargetVehicle && distToSedan < ENTER_SEDAN_RADIUS) {
+        enterPromptEl.classList.add('visible');
+      } else {
+        enterPromptEl.classList.remove('visible');
+      }
+      refreshWaypointDist();
+    }
+
+    if (mission.state === 'NAV_B') {
+      const distToB = BABYLON.Vector3.Distance(activeVehicle.mesh.position, WAYPOINT_B_POS);
+      refreshWaypointDist();
+      if (inTargetVehicle && distToB < WAYPOINT_B_RADIUS) {
+        advanceMission('REACH_B');
+      }
+      if (!inTargetVehicle) {
+        const sedanToB = BABYLON.Vector3.Distance(targetVehicle.mesh.position, WAYPOINT_B_POS);
+        if (sedanToB > ABANDON_RADIUS && mission.abandonWarningCooldown <= 0) {
+          mission.abandonWarningCooldown = 8;
+          UIsteps.deliver.style.color = '#ff4444';
+          setTimeout(() => { UIsteps.deliver.style.color = ''; }, 2000);
+        }
+      }
+    }
+
+    if (mission.abandonWarningCooldown > 0) mission.abandonWarningCooldown -= dt;
+
+    if (blinkTimer > 0.5) {
+      blinkTimer = 0;
+      if (markerA.isVisible) markerA.material.alpha = markerA.material.alpha > 0.3 ? 0.2 : 0.55;
+      if (markerB.isVisible) markerB.material.alpha = markerB.material.alpha > 0.3 ? 0.2 : 0.55;
+    }
+
+    const chassisPos = activeVehicle.mesh.position;
+    camTarget = BABYLON.Vector3.Lerp(camTarget, chassisPos, 0.08);
+    followCam.target = camTarget;
+    if (camMode === 1) {
+      const rot = activeVehicle.mesh.rotationQuaternion || BABYLON.Quaternion.Identity();
+      const worldOff = chaseOffset.rotateByQuaternionToRef(rot, new BABYLON.Vector3());
+      const desiredPos = chassisPos.add(worldOff);
+      followCam.position = BABYLON.Vector3.Lerp(followCam.position, desiredPos, 0.06);
+    }
+  });
+
+  setLoad(95, 'Starting render loop…');
+  engine.runRenderLoop(() => scene.render());
+  window.addEventListener('resize', () => engine.resize());
+
+  setLoad(100, 'Ready');
+  await new Promise(r => setTimeout(r, 400));
+  document.getElementById('loading').style.display   = 'none';
+  document.getElementById('hud').style.display       = 'block';
+  document.getElementById('wallet').style.display    = 'block';
+  document.getElementById('mission-panel').style.display = 'block';
+  document.getElementById('controls').style.display  = 'block';
+
+  // NOTE: Vehicle physics uses Havok PhysicsBody (force model).
+  // BABYLON.PhysicsVehicle is ES-module-only and is never available in the
+  // babylonjs UMD CDN bundle at any version — see BUG-006 in qa/bugs/.
+  console.log('[M001] Ready. Physics: Havok PhysicsBody (force model). Mission: IDLE → fires in 3s.');
+
+})();
+</script>
+</body>
+</html>
