@@ -658,10 +658,14 @@
       const drag = linVel.scale(-0.02 * T.mass * 0.001);
       chassisAggregate.body.applyForce(drag, chassisMesh.getAbsolutePosition());
 
+      // Handbrake: kill lateral velocity — scale by T.hbForce so slider is live
+      // hbForce=230 (original default) → factor 1.0 (preserves original behaviour)
+      // hbForce=140 (current default)  → factor ~0.61 (more drift, economy sedan)
       if (keys.space) {
         const lat = BABYLON.Vector3.Dot(linVel, right);
+        const hbImpulseFactor = (T.hbForce / 230) * T.mass * 0.3;
         chassisAggregate.body.applyImpulse(
-          right.scale(-lat * T.mass * 0.3),
+          right.scale(-lat * hbImpulseFactor),
           chassisMesh.getAbsolutePosition()
         );
       }
@@ -716,7 +720,11 @@
   document.getElementById('tuning').style.display   = 'block';
   document.getElementById('controls').style.display = 'block';
 
-  console.log('[Harness] Ready. Vehicle mode:', vehicle ? 'PhysicsVehicle (Havok)' : 'Force fallback');
+  // NOTE: BABYLON.PhysicsVehicle is ES-module-only and is never exported to the global BABYLON
+  // namespace in the babylonjs UMD CDN bundle at any version. The try/catch above always catches
+  // a TypeError and sets vehicle = null. "Havok PhysicsBody (force model)" is the actual physics
+  // path — PhysicsAggregate provides Havok collision/rigid-body; drive/steer/handbrake use impulses.
+  console.log('[Harness] Ready. Vehicle mode:', vehicle ? 'PhysicsVehicle (Havok)' : 'Havok PhysicsBody (force model)');
 })();
 </script>
 </body>
