@@ -4,7 +4,7 @@
 **Date:** 2026-03-20
 **Status:** Active — constraint-accurate, cleared for implementation
 
-> Changes from v0.2: Physics engine corrected to Havok (Babylon.js native) throughout — Rapier.js references removed. `follow_vehicle` step type moved from Sprint 2 to Sprint 1 Essential (required for M002). M003 ram trigger threshold added (≥20 km/h relative velocity) and auto-eject on hard collision confirmed. M004 STEP 3 updated to use `race` step type (new first-class step type replacing navigate+race_course). M005 Choice C updated with immediate world change (Ray contact suppression). `race` step type added to MVP step type list.
+> Changes from v0.2: Physics engine corrected to Havok (Babylon.js native) throughout — Rapier.js references removed. `follow_vehicle` step type moved from Sprint 2 to Sprint 1 Essential (required for M002). M003 ram trigger threshold added (≥20 km/h relative velocity) and auto-eject on hard collision confirmed. M004 STEP 3 updated to use `race` step type (new first-class step type replacing navigate+race_course). M005 Choice C updated with immediate world change (Ray contact suppression). `race` step type added to MVP step type list. Day/night cycle clarified: Sprint 1 = two discrete states, Sprint 2 = continuous cycle.
 
 ---
 
@@ -480,7 +480,7 @@ NOTE: This is the first meaningful choice. All three paths lead to Act 2 — no 
 6. On-foot: walk/run, fists, pistol (proximity lock-on)
 7. Minimap with mission markers + wanted search circle
 8. Radio (2–3 curated playlists minimum)
-9. Day/night cycle
+9. Day/night cycle — **Sprint 1: two discrete states** (day 17:30 / night 22:00, instantaneous swap, no transition animation). Mission scripting assumes static states. Sprint 2: continuous 24-hour cycle with smooth transitions and time-skip system for mission-triggered time-of-day.
 10. Mission step types: `navigate`, `interact`, `steal_vehicle`, `eliminate`, `escape`, `timer`, `follow_vehicle`, `race`
 
 ### SPRINT 2 TARGET
@@ -490,6 +490,8 @@ NOTE: This is the first meaningful choice. All three paths lead to Act 2 — no 
 - Body shop + hide cooldown methods
 - Passive skill growth
 - Collectibles / side content
+- Continuous day/night cycle (GameClock-driven sun movement, LUT crossfade, gradual streetlight activation)
+- Time-skip system for mission-triggered time-of-day changes
 
 ### NICE-TO-HAVE (Post-MVP)
 - 5-star wanted system
