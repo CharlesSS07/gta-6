@@ -1,0 +1,44 @@
+# Local development stack — runs a local Postgres that mirrors the Supabase schema.
+# Use this to validate endpoint logic without Supabase credentials.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up -d
+#   bun run migrate:local   # runs migrations against local DB
+#   bun run dev             # starts the API server against local DB
+
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: gta6_dev
+      POSTGRES_USER: gta6_dev
+      POSTGRES_PASSWORD: devpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d  # auto-runs migrations on first start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gta6_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin for local DB inspection (optional, remove if not needed)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: dev@gta6.local
+      PGADMIN_DEFAULT_PASSWORD: devpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
