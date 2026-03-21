@@ -259,6 +259,7 @@ These decisions were made, then reconsidered, or reversed. Documented here for r
 | 60Hz vs 120Hz physics | 60Hz (simpler) | 120Hz | 60Hz degrades visibly during tile loads + GC pauses. 120Hz + interpolation buffers this gracefully. |
 | Delta saves vs snapshots | Deltas (smaller file size) | Full snapshots | Deltas are fragile on crash and hard to migrate. Snapshots are operationally simpler. |
 | OSM vs Mapbox vs hand-crafted | Mapbox (polished), hand-crafted (authentic) | OSM | Mapbox is expensive at scale. Hand-crafted loses real LA feel. OSM is free, accurate, covers all needs. |
+| Backend deployment: Cloudflare Workers vs Supabase Edge Functions | Cloudflare Workers (planned; edge geography, Hono first-class) | Supabase Edge Functions | Supabase Edge Functions colocate with the DB (internal hop vs cross-CDN round trip), eliminate a second deployment pipeline, require no runtime adaptation (Hono + Deno works unchanged), and validate JWTs natively against the same Auth service. Save/load is latency-tolerant, not real-time — edge geography advantage of Workers doesn't apply. Cloudflare CDN for static assets (tiles, models) is unchanged. |
 
 ---
 
@@ -272,4 +273,4 @@ These decisions were made, then reconsidered, or reversed. Documented here for r
 
 **Authoritative source:** `/architecture/technical-architecture-v0.1.md`
 
-**Last updated:** 2026-03-20
+**Last updated:** 2026-03-20 (deployment decision log updated: Cloudflare Workers → Supabase Edge Functions)
