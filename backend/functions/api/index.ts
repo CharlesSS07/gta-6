@@ -34,8 +34,8 @@ app.use('*', async (c, next) => {
   await next()
 })
 
-// CORS preflight
-app.options('*', (c) => c.text('', 204))
+// CORS preflight — use body(null) since HTTP 204 must have no body
+app.options('*', (c) => c.body(null, 204))
 
 // ── Auth ─────────────────────────────────────────────────────
 async function requireAuth(c: any, pathPlayerId: string): Promise<{ playerId: string } | null> {
