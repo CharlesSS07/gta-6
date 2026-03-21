@@ -21,14 +21,17 @@ const app = new Hono()
 
 // Required headers on every response
 app.use('*', async (c, next) => {
-  await next()
+  // Set before next() so headers are in context when route handler creates response.
   // SharedArrayBuffer requirements (Phoenix physics worker, Lux streaming)
   c.header('Cross-Origin-Opener-Policy', 'same-origin')
   c.header('Cross-Origin-Embedder-Policy', 'require-corp')
+  // Required for COEP-enabled pages to fetch cross-origin resources (BUG-007)
+  c.header('Cross-Origin-Resource-Policy', 'cross-origin')
   // CORS for browser game client
   c.header('Access-Control-Allow-Origin', '*')
   c.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  await next()
 })
 
 // CORS preflight
@@ -251,7 +254,7 @@ app.post('/v1/events/:player_id', async (c) => {
 app.get('/v1/profile/:player_id', async (c) => {
   const pathPlayerId = c.req.param('player_id')
   const auth = await requireAuth(c, pathPlayerId)
-  if (!auth) return c.json({ error: 'unauthorized' })\
+  if (!auth) return c.json({ error: 'unauthorized' })
 
   const { data, error } = await supabase
     .from('players')
